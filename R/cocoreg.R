@@ -369,7 +369,7 @@ get_starting_dataset <- function(p) {
 #' @param paths A list of list with paths.
 #' @param mappings A list containing the mapping functions described in the path.
 #'
-#' @return A vector containing the average composition from all the paths.
+#' @return A vector containing the path-wise composition from all the paths.
 #'
 #' @importFrom abind abind
 #'
@@ -383,7 +383,8 @@ compose_all <- function(x, paths, mappings) {
 
     tmp <- lapply(tmp, as.matrix)
     tmp <- do.call(abind::abind, c(tmp, along = 3)) #catenated along the third dimension
-    as.data.frame(apply(tmp, c(1, 2), mean)) # average out 3rd dimension
+    dimnames(tmp)[[3]] <- sprintf('p%d', seq.int(length(paths)) ) #set dimnames
+    tmp
 }
 
 
@@ -406,6 +407,8 @@ compose_all <- function(x, paths, mappings) {
 #' @return A list with elements:
 #' \item{$data:}{[1,K] list of data.frames containing the joint information,
 #'                organised identically to the input data.}
+#' \item{$path_data:}{[1,K] list of [time, variable, #paths] numeric arrays containing 
+#'                  the joint information per sampled path.}
 #' \item{$mappings:}{[1,K*K-K] list of functions, mappings between datasets}
 #' \item{$paths:}{[(K-1)(K-2)!, K] list of lists, paths for each data set}
 #' \item{$cyclic:}{input cyclic as is}
@@ -417,6 +420,7 @@ compose_all <- function(x, paths, mappings) {
 #' @examples
 #' dc <- create_syn_data_toy()
 #' ccr <- cocoreg(dc$data)
+#' str(ccr, max.level = 1)
 #' 
 #' ggplot_dflst(dc$data, ncol=1)
 #' ggplot_dflst(ccr$data, ncol=1)
@@ -447,19 +451,32 @@ cocoreg <- function(data, cyclic = FALSE, mapping_function = mapping_lm,
   
   ## Compute cocoreg
   mappings <- create_mappings(data, mapping_function = mapping_function)
-  ccr_data <- lapply(seq.int(length(data)), function(i) compose_all(data, generate_paths(i, n = length(data), cyclic = cyclic, sample_paths=sample_paths), mappings))
+  ccr_path_data <- lapply(seq.int(length(data)), function(i) compose_all(data, generate_paths(i, n = length(data), cyclic = cyclic, sample_paths=sample_paths), mappings))
+  
+  ## average path-wise results (the 3rd dimension)
+  ccr_data  <- lapply(ccr_path_data, function(el){as.data.frame(apply(el, c(1, 2), mean))})
+  
+  ## (re)generate paths for output
   paths <- sapply(seq.int(length(data)), function(i)  generate_paths(i, n = length(data), cyclic = cyclic, sample_paths=sample_paths))
+  
   #TODO: test if the use of vapply() would not leave out the dim attribute?
   if (length(data)==2){
     dim(paths) <- c(1, 2) #prevent from becoming dimensionless  
   }
   
-  ## Convert back to original data format
-  ccr_data <- apply_dc_meta(ccr_data, dmeta) 
+  ## Convert back to original data format (for $data and $path_data)
+  ccr_data <- apply_dc_meta(ccr_data, dmeta)
+  
+  names(ccr_path_data) <- dmeta$dcnames
+  for (ind in seq.int(length(ccr_path_data))){
+    dimnames(ccr_path_data[[ind]])[[1]] <- dmeta$dcdimnames[[ind]][[1]]
+    dimnames(ccr_path_data[[ind]])[[2]] <- dmeta$dcdimnames[[ind]][[2]]
+  }
   
   ## Return
   res_lst <- list(
     "data"         = ccr_data,
+    "path_data"    = ccr_path_data,
     "mappings"     = mappings,
     "paths"        = paths,
     "cyclic"       = cyclic,
